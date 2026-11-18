@@ -6,7 +6,7 @@ use_experimental_fxv2_oal 'yes'
 author 'ButterChilly'
 description 'A vehicle rental resource for your FiveM server'
 version '1.0.0'
-repository 'https://github.com/ButterChilly/butter_rentals'
+repository 'https://github.com/kavyasingh8/butter_rentals'
 
 ox_lib 'locale'
 
