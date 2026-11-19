@@ -7,12 +7,6 @@ local currentTag = GetResourceMetadata(resource, 'version', 0)
 local repository = GetResourceMetadata(resource, 'repository', 0)
 local slug = repository and repository:match('github%.com/([^/]+/[^/%s]+)')
 
-local FAILURES = {
-    [403] = 'GitHub rate limit reached, update check skipped.',
-    [404] = 'No published release found for %s. Is the repository public with a release?',
-    [429] = 'GitHub rate limit reached, update check skipped.',
-}
-
 ---@param version string?
 ---@return integer[]?
 local function parseVersion(version)
@@ -32,39 +26,35 @@ local function compareVersions(a, b)
     return 0
 end
 
----@param current integer[]
----@param status integer
----@param body string?
-local function onRelease(current, status, body)
-    if status ~= 200 then
-        local message = FAILURES[status] or 'Update check failed (HTTP %s).'
-        lib.print.warn(message:format(status == 404 and slug or status))
-        return
-    end
-
-    local ok, release = pcall(json.decode, body or '')
-    local latest = ok and type(release) == 'table' and parseVersion(release.tag_name)
-    if not latest then
-        lib.print.warn('Update check failed: the latest release has no readable version tag.')
-        return
-    end
-
-    local result = compareVersions(current, latest)
-    if result < 0 then
-        lib.print.warn(('Update available: %s -> %s\n%s'):format(currentTag, release.tag_name, release.html_url))
-    elseif result == 0 then
-        lib.print.info(('Running the latest version (%s).'):format(currentTag))
-    else
-        lib.print.info(('Running %s, newer than the latest release (%s).'):format(currentTag, release.tag_name))
-    end
-end
-
 local current = parseVersion(currentTag)
 if not current or not slug then
     lib.print.warn('Update check skipped: set a "version" and a GitHub "repository" in fxmanifest.lua.')
     return
 end
 
-PerformHttpRequest(('https://api.github.com/repos/%s/releases/latest'):format((slug:gsub('%.git$', ''))), function(status, body)
-    onRelease(current, status, body)
-end, 'GET', '', { ['User-Agent'] = resource, ['Accept'] = 'application/vnd.github+json' })
+slug = slug:gsub('%.git$', '')
+
+-- Reads the published fxmanifest from raw.githubusercontent.com, which is not
+-- subject to the 60 requests/hour limit of api.github.com.
+PerformHttpRequest(('https://raw.githubusercontent.com/%s/HEAD/fxmanifest.lua'):format(slug), function(status, body)
+    if status ~= 200 then
+        lib.print.warn(('Update check failed (HTTP %s). Is %s public?'):format(status, slug))
+        return
+    end
+
+    local latestTag = body and body:match('\nversion%s*[%(]?%s*[\'"]([^\'"]+)[\'"]')
+    local latest = parseVersion(latestTag)
+    if not latest then
+        lib.print.warn('Update check failed: the remote fxmanifest.lua has no readable version.')
+        return
+    end
+
+    local result = compareVersions(current, latest)
+    if result < 0 then
+        lib.print.warn(('Update available: %s -> %s\nhttps://github.com/%s/releases/latest'):format(currentTag, latestTag, slug))
+    elseif result == 0 then
+        lib.print.info(('Running the latest version (%s).'):format(currentTag))
+    else
+        lib.print.info(('Running %s, newer than the published version (%s).'):format(currentTag, latestTag))
+    end
+end, 'GET', '', { ['User-Agent'] = resource })
